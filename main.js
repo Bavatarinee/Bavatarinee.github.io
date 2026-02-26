@@ -275,3 +275,138 @@ document.querySelectorAll('.project-card').forEach(card => {
         card.style.transition = 'transform 0.4s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.4s';
     });
 });
+
+// ─── GITHUB API AUTO-SYNC ────────────────────────
+(async function loadGitHubProjects() {
+    const GITHUB_USER = 'Bavatarinee';
+    const grid = document.getElementById('projects-grid');
+    const syncStatus = document.getElementById('sync-status');
+    const metaNum = document.querySelector('.hero-meta .meta-item:first-child .meta-num');
+
+    // Helper: derive a category label from repo language/topics/name
+    function deriveCategory(repo) {
+        const name = (repo.name || '').toLowerCase();
+        const lang = (repo.language || '').toLowerCase();
+
+        if (name.includes('voice') || name.includes('spoof') || name.includes('audio')) return 'Audio Security · ML';
+        if (name.includes('eye') || name.includes('disease')) return 'Healthcare · Deep Learning';
+        if (name.includes('medicine') || name.includes('overdose') || name.includes('health')) return 'Healthcare · ML';
+        if (name.includes('agriculture') || name.includes('crop') || name.includes('farm')) return 'Agriculture · Deep Learning';
+        if (name.includes('forest') || name.includes('fire')) return 'Environment · ML';
+        if (name.includes('paint') || name.includes('tamil') || name.includes('heritage')) return 'Cultural Heritage · CV';
+        if (name.includes('chatbot') || name.includes('qa') || name.includes('nlp') || name.includes('question')) return 'NLP · Chatbot';
+        if (name.includes('ecommerce') || name.includes('shop') || name.includes('store')) return 'Web · JavaScript';
+        if (name.includes('portfolio')) return 'Web · Personal';
+        if (lang === 'python') return 'Python · ML';
+        if (lang === 'javascript') return 'Web · JavaScript';
+        if (lang === 'r') return 'Data Analysis · R';
+        if (lang === 'jupyter notebook') return 'Data Science · Notebook';
+        return lang ? `${repo.language} · Project` : 'Project';
+    }
+
+    // Helper: build a card HTML for a repo
+    function buildCard(repo, index) {
+        const num = String(index + 1).padStart(2, '0');
+        const category = deriveCategory(repo);
+        const stars = repo.stargazers_count > 0 ? `⭐ ${repo.stargazers_count}` : '⭐ New';
+        const desc = repo.description
+            ? repo.description.slice(0, 160) + (repo.description.length > 160 ? '…' : '')
+            : 'Explore this project on GitHub.';
+        const langTag = repo.language ? `<span>${repo.language}</span>` : '';
+        const featured = index % 3 === 0 ? ' project-card--featured' : '';
+
+        return `
+        <article class="project-card${featured} reveal" id="proj-gh-${repo.id}" style="transition-delay:${index * 60}ms">
+            <div class="project-card-inner">
+                <div class="project-number">${num}</div>
+                <div class="project-category">${category}</div>
+                <h3 class="project-title">${repo.name.replace(/-/g, ' ').replace(/_/g, ' ')}</h3>
+                <p class="project-desc">${desc}</p>
+                <div class="project-stack">${langTag}</div>
+                <div class="project-footer">
+                    <div class="project-stars">${stars}</div>
+                    <a href="${repo.html_url}" target="_blank" rel="noopener"
+                       class="project-link" aria-label="View ${repo.name} on GitHub">
+                        View Project ↗
+                    </a>
+                </div>
+            </div>
+            <div class="project-card-glow"></div>
+        </article>`;
+    }
+
+    try {
+        // Fetch all repos (up to 100, sorted by last updated)
+        const res = await fetch(
+            `https://api.github.com/users/${GITHUB_USER}/repos?per_page=100&sort=updated&type=public`,
+            { headers: { 'Accept': 'application/vnd.github.v3+json' } }
+        );
+
+        if (!res.ok) throw new Error(`GitHub API ${res.status}`);
+
+        const repos = await res.json();
+
+        // Filter out forked repos and very small/meta repos
+        const filtered = repos.filter(r =>
+            !r.fork &&
+            r.name.toLowerCase() !== GITHUB_USER.toLowerCase() &&
+            !r.name.toLowerCase().includes('config') &&
+            !r.name.toLowerCase().includes('.github')
+        );
+
+        if (filtered.length === 0) throw new Error('No repos found');
+
+        // Render cards
+        grid.innerHTML = filtered.map(buildCard).join('');
+
+        // Update hero counter
+        if (metaNum) metaNum.textContent = filtered.length;
+
+        // Update sync badge
+        if (syncStatus) {
+            const now = new Date();
+            syncStatus.textContent = `Live — synced from GitHub · ${filtered.length} repos · updated ${now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+        }
+
+        // Apply reveal animation to new cards
+        const newCards = grid.querySelectorAll('.project-card');
+        newCards.forEach(card => {
+            revealObs.observe(card);
+            // Re-attach tilt effect
+            card.addEventListener('mousemove', e => {
+                const r = card.getBoundingClientRect();
+                const x = (e.clientX - r.left - r.width / 2) / (r.width / 2);
+                const y = (e.clientY - r.top - r.height / 2) / (r.height / 2);
+                card.style.transform = `translateY(-6px) rotateX(${-y * 3}deg) rotateY(${x * 3}deg)`;
+                card.style.transition = 'transform 0.1s, box-shadow 0.1s';
+            });
+            card.addEventListener('mouseleave', () => {
+                card.style.transform = '';
+                card.style.transition = 'transform 0.4s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.4s';
+            });
+            // Glow effect
+            card.addEventListener('mousemove', e => {
+                const rect = card.getBoundingClientRect();
+                const px = ((e.clientX - rect.left) / rect.width * 100).toFixed(1);
+                const py = ((e.clientY - rect.top) / rect.height * 100).toFixed(1);
+                const glow = card.querySelector('.project-card-glow');
+                if (glow) glow.style.background = `radial-gradient(ellipse at ${px}% ${py}%, rgba(125,155,118,0.1), transparent 65%)`;
+            });
+        });
+
+    } catch (err) {
+        console.warn('GitHub API fetch failed:', err.message);
+        // On error — show graceful fallback
+        grid.innerHTML = `
+        <div class="github-error-card">
+            <p>📡 Could not load live GitHub data right now.</p>
+            <p style="margin-top:0.75rem">
+                <a href="https://github.com/${GITHUB_USER}" target="_blank" rel="noopener">
+                    View all projects on GitHub ↗
+                </a>
+            </p>
+        </div>`;
+        if (syncStatus) syncStatus.textContent = 'Could not sync — see GitHub';
+    }
+})();
+
