@@ -304,15 +304,45 @@ document.querySelectorAll('.project-card').forEach(card => {
         return lang ? `${repo.language} · Project` : 'Project';
     }
 
-    // Helper: build a card HTML for a repo
-    function buildCard(repo, index) {
+    // Helper: derive multiple language tags from repo metadata (no extra API calls)
+    function deriveLanguages(repo) {
+        const langs = new Set();
+        const name = (repo.name || '').toLowerCase();
+        const desc = (repo.description || '').toLowerCase();
+        const combined = name + ' ' + desc;
+
+        // Primary language from GitHub
+        if (repo.language) langs.add(repo.language);
+
+        // Heuristic extras based on name / description keywords
+        if (/python|sklearn|tensorflow|keras|pytorch|pandas|numpy|jupyter|colab|ml|deep.learn|neural|cnn|nlp|spacy|hugging/.test(combined)) langs.add('Python');
+        if (/javascript|js|node|react|vue|express|html|css|web|frontend|dashboard/.test(combined)) langs.add('JavaScript');
+        if (/html/.test(combined)) langs.add('HTML');
+        if (/css|style/.test(combined)) langs.add('CSS');
+        if (/\br\b|rstudio|ggplot|tidyverse|dplyr/.test(combined)) langs.add('R');
+        if (/sql|mysql|postgres|sqlite|database|hive|hiveql/.test(combined)) langs.add('SQL');
+        if (/spark|pyspark|hadoop/.test(combined)) langs.add('PySpark');
+        if (/jupyter|notebook/.test(combined)) langs.add('Jupyter');
+        if (/flask|django|fastapi/.test(combined)) langs.add('Python');
+        if (/opencv|cv2|image|vision/.test(combined)) langs.add('Python');
+
+        const result = [...langs];
+        // Cap at 4 tags to keep cards tidy
+        return result.slice(0, 4);
+    }
+
+    // Helper: build a card HTML for a repo with all its languages
+    function buildCard(repo, index, languages) {
         const num = String(index + 1).padStart(2, '0');
         const category = deriveCategory(repo);
         const stars = repo.stargazers_count > 0 ? `⭐ ${repo.stargazers_count}` : '⭐ New';
         const desc = repo.description
             ? repo.description.slice(0, 160) + (repo.description.length > 160 ? '…' : '')
             : 'Explore this project on GitHub.';
-        const langTag = repo.language ? `<span>${repo.language}</span>` : '';
+        // Build a tag for each language used in the repo
+        const langTags = languages.length > 0
+            ? languages.map(l => `<span>${l}</span>`).join('')
+            : '';
         const featured = index % 3 === 0 ? ' project-card--featured' : '';
 
         return `
@@ -322,7 +352,7 @@ document.querySelectorAll('.project-card').forEach(card => {
                 <div class="project-category">${category}</div>
                 <h3 class="project-title">${repo.name.replace(/-/g, ' ').replace(/_/g, ' ')}</h3>
                 <p class="project-desc">${desc}</p>
-                <div class="project-stack">${langTag}</div>
+                <div class="project-stack">${langTags}</div>
                 <div class="project-footer">
                     <div class="project-stars">${stars}</div>
                     <a href="${repo.html_url}" target="_blank" rel="noopener"
@@ -333,6 +363,29 @@ document.querySelectorAll('.project-card').forEach(card => {
             </div>
             <div class="project-card-glow"></div>
         </article>`;
+    }
+
+    // Helper: attach interactive effects to a card element
+    function attachCardEffects(card) {
+        revealObs.observe(card);
+        card.addEventListener('mousemove', e => {
+            const r = card.getBoundingClientRect();
+            const x = (e.clientX - r.left - r.width / 2) / (r.width / 2);
+            const y = (e.clientY - r.top - r.height / 2) / (r.height / 2);
+            card.style.transform = `translateY(-6px) rotateX(${-y * 3}deg) rotateY(${x * 3}deg)`;
+            card.style.transition = 'transform 0.1s, box-shadow 0.1s';
+        });
+        card.addEventListener('mouseleave', () => {
+            card.style.transform = '';
+            card.style.transition = 'transform 0.4s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.4s';
+        });
+        card.addEventListener('mousemove', e => {
+            const rect = card.getBoundingClientRect();
+            const px = ((e.clientX - rect.left) / rect.width * 100).toFixed(1);
+            const py = ((e.clientY - rect.top) / rect.height * 100).toFixed(1);
+            const glow = card.querySelector('.project-card-glow');
+            if (glow) glow.style.background = `radial-gradient(ellipse at ${px}% ${py}%, rgba(125,155,118,0.1), transparent 65%)`;
+        });
     }
 
     try {
@@ -356,8 +409,11 @@ document.querySelectorAll('.project-card').forEach(card => {
 
         if (filtered.length === 0) throw new Error('No repos found');
 
-        // Render cards
-        grid.innerHTML = filtered.map(buildCard).join('');
+        // Derive language tags from repo metadata (no extra API calls — avoids rate limiting)
+        const allLanguages = filtered.map(repo => deriveLanguages(repo));
+
+        // Render cards with full language lists
+        grid.innerHTML = filtered.map((repo, i) => buildCard(repo, i, allLanguages[i])).join('');
 
         // Update hero counter
         if (metaNum) metaNum.textContent = filtered.length;
@@ -368,31 +424,8 @@ document.querySelectorAll('.project-card').forEach(card => {
             syncStatus.textContent = `Live — synced from GitHub · ${filtered.length} repos · updated ${now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
         }
 
-        // Apply reveal animation to new cards
-        const newCards = grid.querySelectorAll('.project-card');
-        newCards.forEach(card => {
-            revealObs.observe(card);
-            // Re-attach tilt effect
-            card.addEventListener('mousemove', e => {
-                const r = card.getBoundingClientRect();
-                const x = (e.clientX - r.left - r.width / 2) / (r.width / 2);
-                const y = (e.clientY - r.top - r.height / 2) / (r.height / 2);
-                card.style.transform = `translateY(-6px) rotateX(${-y * 3}deg) rotateY(${x * 3}deg)`;
-                card.style.transition = 'transform 0.1s, box-shadow 0.1s';
-            });
-            card.addEventListener('mouseleave', () => {
-                card.style.transform = '';
-                card.style.transition = 'transform 0.4s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.4s';
-            });
-            // Glow effect
-            card.addEventListener('mousemove', e => {
-                const rect = card.getBoundingClientRect();
-                const px = ((e.clientX - rect.left) / rect.width * 100).toFixed(1);
-                const py = ((e.clientY - rect.top) / rect.height * 100).toFixed(1);
-                const glow = card.querySelector('.project-card-glow');
-                if (glow) glow.style.background = `radial-gradient(ellipse at ${px}% ${py}%, rgba(125,155,118,0.1), transparent 65%)`;
-            });
-        });
+        // Apply reveal animation & interactive effects to all new cards
+        grid.querySelectorAll('.project-card').forEach(card => attachCardEffects(card));
 
     } catch (err) {
         console.warn('GitHub API fetch failed:', err.message);
