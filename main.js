@@ -282,6 +282,7 @@ document.querySelectorAll('.project-card').forEach(card => {
     const grid = document.getElementById('projects-grid');
     const syncStatus = document.getElementById('sync-status');
     const metaNum = document.querySelector('.hero-meta .meta-item:first-child .meta-num');
+    let rateLimited = false;
 
     // Helper: derive a category label from repo language/topics/name
     function deriveCategory(repo) {
@@ -304,15 +305,126 @@ document.querySelectorAll('.project-card').forEach(card => {
         return lang ? `${repo.language} · Project` : 'Project';
     }
 
+    // Helper: fetch all languages for a repo (with localStorage caching)
+    async function getRepoLanguages(repo) {
+        const cacheKey = `gh_langs_v2_${repo.id}`; // v2 to bust old cache
+        const cached = localStorage.getItem(cacheKey);
+        
+        if (cached) {
+            const parsed = JSON.parse(cached);
+            if (Date.now() - parsed.timestamp < 86400000) return parsed.data;
+        }
+
+        try {
+            const res = await fetch(repo.languages_url, {
+                headers: { 'Accept': 'application/vnd.github.v3+json' }
+            });
+            
+            if (res.status === 403) rateLimited = true;
+
+            if (res.ok) {
+                const data = await res.json();
+                const langs = Object.keys(data);
+                localStorage.setItem(cacheKey, JSON.stringify({
+                    timestamp: Date.now(),
+                    data: langs
+                }));
+                return langs;
+            }
+        } catch (e) {
+            console.warn(`Failed to fetch languages for ${repo.name}:`, e);
+        }
+        return [];
+    }
+
+    // Helper: combine fetched languages with topics and robust heuristics
+    function combineTechStack(repo, fetchedLangs) {
+        const stack = new Set();
+        
+        // 1. Add all fetched languages
+        if (fetchedLangs && fetchedLangs.length > 0) {
+            fetchedLangs.forEach(l => stack.add(l));
+        }
+        
+        // 2. Add primary language
+        if (repo.language) stack.add(repo.language);
+
+        // 3. Add topics (filters out generic ones)
+        if (repo.topics && Array.isArray(repo.topics)) {
+            repo.topics.forEach(topic => {
+                const lower = topic.toLowerCase();
+                if (topic.length < 15 && !['project', 'data', 'repository'].includes(lower)) {
+                    stack.add(topic.charAt(0).toUpperCase() + topic.slice(1));
+                }
+            });
+        }
+
+        // 4. Robust Heuristics (Enhanced fallback)
+        const name = (repo.name || '').toLowerCase();
+        const desc = (repo.description || '').toLowerCase();
+        const combined = (name + ' ' + desc).replace(/-/g, ' ').replace(/_/g, ' ');
+
+        // Web technologies
+        if (combined.includes('javascript') || combined.includes('react') || combined.includes('html') || combined.includes('website') || combined.includes('ecommerce') || combined.includes('dashboard')) {
+            stack.add('JavaScript');
+            stack.add('HTML');
+            stack.add('CSS');
+        }
+        
+        // ML & AI
+        if (combined.includes('python') || combined.includes('ml') || combined.includes('learning') || combined.includes('detection') || combined.includes('prediction') || combined.includes('classification')) {
+            stack.add('Python');
+            if (combined.includes('deep') || combined.includes('cnn') || combined.includes('tensorflow') || combined.includes('keras')) {
+                stack.add('Deep Learning');
+                stack.add('TensorFlow');
+            }
+            if (combined.includes('scikit') || combined.includes('sklearn')) stack.add('Scikit-learn');
+        }
+
+        // Data & SQL
+        if (combined.includes('sql') || combined.includes('hive') || combined.includes('database') || combined.includes('queries') || combined.includes('analytics')) {
+            stack.add('SQL');
+            if (combined.includes('hive')) stack.add('Apache Hive');
+            if (combined.includes('spark') || combined.includes('pyspark')) stack.add('PySpark');
+        }
+
+        // Natural Language Processing
+        if (combined.includes('nlp') || combined.includes('chatbot') || combined.includes('text') || combined.includes('documents')) {
+            stack.add('NLP');
+            if (combined.includes('tfidf') || combined.includes('word2vec')) stack.add('NLTK/Spacy');
+        }
+
+        // Clean & Normalize
+        const result = new Set();
+        stack.forEach(s => {
+            if (typeof s === 'string' && s.length > 1) {
+                // Special case handling for common caps
+                let val = s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
+                if (val.toLowerCase() === 'javascript') val = 'JavaScript';
+                if (val.toLowerCase() === 'html') val = 'HTML';
+                if (val.toLowerCase() === 'css') val = 'CSS';
+                if (val.toLowerCase() === 'pyspark') val = 'PySpark';
+                if (val.toLowerCase() === 'nlp') val = 'NLP';
+                if (val.toLowerCase() === 'sql') val = 'SQL';
+                if (val.toLowerCase() === 'ml') val = 'ML';
+                result.add(val);
+            }
+        });
+
+        // Limit to 5 labels to keep cards clean
+        return [...result].slice(0, 5);
+    }
+
     // Helper: build a card HTML for a repo
-    function buildCard(repo, index) {
+    function buildCard(repo, index, languages) {
         const num = String(index + 1).padStart(2, '0');
         const category = deriveCategory(repo);
         const stars = repo.stargazers_count > 0 ? `⭐ ${repo.stargazers_count}` : '⭐ New';
         const desc = repo.description
             ? repo.description.slice(0, 160) + (repo.description.length > 160 ? '…' : '')
             : 'Explore this project on GitHub.';
-        const langTag = repo.language ? `<span>${repo.language}</span>` : '';
+        
+        const langTags = languages.map(l => `<span>${l}</span>`).join('');
         const featured = index % 3 === 0 ? ' project-card--featured' : '';
 
         return `
@@ -322,7 +434,7 @@ document.querySelectorAll('.project-card').forEach(card => {
                 <div class="project-category">${category}</div>
                 <h3 class="project-title">${repo.name.replace(/-/g, ' ').replace(/_/g, ' ')}</h3>
                 <p class="project-desc">${desc}</p>
-                <div class="project-stack">${langTag}</div>
+                <div class="project-stack">${langTags}</div>
                 <div class="project-footer">
                     <div class="project-stars">${stars}</div>
                     <a href="${repo.html_url}" target="_blank" rel="noopener"
@@ -335,18 +447,40 @@ document.querySelectorAll('.project-card').forEach(card => {
         </article>`;
     }
 
+    // Helper: attach interactive effects to a card element
+    function attachCardEffects(card) {
+        revealObs.observe(card);
+        card.addEventListener('mousemove', e => {
+            const r = card.getBoundingClientRect();
+            const x = (e.clientX - r.left - r.width / 2) / (r.width / 2);
+            const y = (e.clientY - r.top - r.height / 2) / (r.height / 2);
+            card.style.transform = `translateY(-6px) rotateX(${-y * 3}deg) rotateY(${x * 3}deg)`;
+            card.style.transition = 'transform 0.1s, box-shadow 0.1s';
+        });
+        card.addEventListener('mouseleave', () => {
+            card.style.transform = '';
+            card.style.transition = 'transform 0.4s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.4s';
+        });
+        card.addEventListener('mousemove', e => {
+            const rect = card.getBoundingClientRect();
+            const px = ((e.clientX - rect.left) / rect.width * 100).toFixed(1);
+            const py = ((e.clientY - rect.top) / rect.height * 100).toFixed(1);
+            const glow = card.querySelector('.project-card-glow');
+            if (glow) glow.style.background = `radial-gradient(ellipse at ${px}% ${py}%, rgba(125,155,118,0.1), transparent 65%)`;
+        });
+    }
+
     try {
-        // Fetch all repos (up to 100, sorted by last updated)
+        // Fetch all repos
         const res = await fetch(
             `https://api.github.com/users/${GITHUB_USER}/repos?per_page=100&sort=updated&type=public`,
             { headers: { 'Accept': 'application/vnd.github.v3+json' } }
         );
 
         if (!res.ok) throw new Error(`GitHub API ${res.status}`);
-
         const repos = await res.json();
 
-        // Filter out forked repos and very small/meta repos
+        // Filter out forked and meta repos
         const filtered = repos.filter(r =>
             !r.fork &&
             r.name.toLowerCase() !== GITHUB_USER.toLowerCase() &&
@@ -356,8 +490,14 @@ document.querySelectorAll('.project-card').forEach(card => {
 
         if (filtered.length === 0) throw new Error('No repos found');
 
+        // Fetch languages for all repositories in parallel (uses caching to avoid rate limits)
+        const allTechStacks = await Promise.all(filtered.map(async (repo) => {
+            const fetched = await getRepoLanguages(repo);
+            return combineTechStack(repo, fetched);
+        }));
+
         // Render cards
-        grid.innerHTML = filtered.map(buildCard).join('');
+        grid.innerHTML = filtered.map((repo, i) => buildCard(repo, i, allTechStacks[i])).join('');
 
         // Update hero counter
         if (metaNum) metaNum.textContent = filtered.length;
@@ -365,38 +505,19 @@ document.querySelectorAll('.project-card').forEach(card => {
         // Update sync badge
         if (syncStatus) {
             const now = new Date();
-            syncStatus.textContent = `Live — synced from GitHub · ${filtered.length} repos · updated ${now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+            const time = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            if (rateLimited) {
+                syncStatus.textContent = `Partially Synced — API Limit reached · updated ${time}`;
+            } else {
+                syncStatus.textContent = `Live — synced from GitHub · ${filtered.length} repos · updated ${time}`;
+            }
         }
 
-        // Apply reveal animation to new cards
-        const newCards = grid.querySelectorAll('.project-card');
-        newCards.forEach(card => {
-            revealObs.observe(card);
-            // Re-attach tilt effect
-            card.addEventListener('mousemove', e => {
-                const r = card.getBoundingClientRect();
-                const x = (e.clientX - r.left - r.width / 2) / (r.width / 2);
-                const y = (e.clientY - r.top - r.height / 2) / (r.height / 2);
-                card.style.transform = `translateY(-6px) rotateX(${-y * 3}deg) rotateY(${x * 3}deg)`;
-                card.style.transition = 'transform 0.1s, box-shadow 0.1s';
-            });
-            card.addEventListener('mouseleave', () => {
-                card.style.transform = '';
-                card.style.transition = 'transform 0.4s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.4s';
-            });
-            // Glow effect
-            card.addEventListener('mousemove', e => {
-                const rect = card.getBoundingClientRect();
-                const px = ((e.clientX - rect.left) / rect.width * 100).toFixed(1);
-                const py = ((e.clientY - rect.top) / rect.height * 100).toFixed(1);
-                const glow = card.querySelector('.project-card-glow');
-                if (glow) glow.style.background = `radial-gradient(ellipse at ${px}% ${py}%, rgba(125,155,118,0.1), transparent 65%)`;
-            });
-        });
+        // Apply reveal animation & interactive effects
+        grid.querySelectorAll('.project-card').forEach(card => attachCardEffects(card));
 
     } catch (err) {
         console.warn('GitHub API fetch failed:', err.message);
-        // On error — show graceful fallback
         grid.innerHTML = `
         <div class="github-error-card">
             <p>📡 Could not load live GitHub data right now.</p>
