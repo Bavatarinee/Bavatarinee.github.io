@@ -438,6 +438,10 @@ loadGitHubProfile();
         const primaryLink = repo.homepage || repo.html_url;
         const repoName = repo.name.replace(/-/g, ' ').replace(/_/g, ' ');
         const updated = formatDate(repo.updated_at);
+        
+        // Hide Live Demo for eye disease (or specific) projects even if they have a homepage set
+        const hideDemo = repoName.toLowerCase().includes('disease') || repoName.toLowerCase().includes('eye');
+        const showDemo = repo.homepage && !hideDemo;
 
         return `
         <div class="project-flip-wrap${featured}" id="proj-flip-${repo.id}"
@@ -477,7 +481,7 @@ loadGitHubProfile();
                                 </svg>
                                 GitHub
                             </a>
-                            ${repo.homepage ? `
+                            ${showDemo ? `
                             <a href="${repo.homepage}" target="_blank" rel="noopener"
                                class="project-link project-link--primary"
                                onclick="event.stopPropagation()">
