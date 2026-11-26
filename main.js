@@ -57,13 +57,13 @@ function resizeCanvas() {
 resizeCanvas();
 window.addEventListener('resize', () => { resizeCanvas(); initParticles(); }, { passive: true });
 
-// Pastel particle colors: lavender, rose, mint, peach, sky
+// Blue & cyan particle colors: sky blue, royal blue, cyan, teal, ice blue
 const PASTEL_HUES = [
-    { h: 265, s: 55, l: 80 }, // lavender
-    { h: 340, s: 70, l: 82 }, // rose
-    { h: 174, s: 45, l: 72 }, // mint
-    { h: 35,  s: 80, l: 80 }, // peach
-    { h: 210, s: 70, l: 80 }, // sky blue
+    { h: 215, s: 85, l: 70 }, // royal blue
+    { h: 195, s: 85, l: 72 }, // sky blue
+    { h: 175, s: 70, l: 65 }, // teal / cyan
+    { h: 210, s: 95, l: 80 }, // ice blue
+    { h: 225, s: 75, l: 75 }, // soft sapphire
 ];
 
 class Particle {
@@ -115,25 +115,25 @@ document.addEventListener('mousemove', e => {
 function animateCanvas() {
     ctx.clearRect(0, 0, W, H);
 
-    // Soft pastel radial gradient bg
+    // Soft blue radial gradient bg
     const bg = ctx.createRadialGradient(W * 0.4, H * 0.35, 0, W / 2, H / 2, Math.max(W, H) * 0.8);
-    bg.addColorStop(0, 'rgba(245,240,255,0.98)');
-    bg.addColorStop(0.4, 'rgba(243,240,252,0.95)');
-    bg.addColorStop(0.75, 'rgba(250,248,255,0.97)');
-    bg.addColorStop(1, 'rgba(250,248,255,1)');
+    bg.addColorStop(0, 'rgba(240,246,255,0.98)');
+    bg.addColorStop(0.4, 'rgba(244,248,255,0.95)');
+    bg.addColorStop(0.75, 'rgba(248,251,255,0.97)');
+    bg.addColorStop(1, 'rgba(248,251,255,1)');
     ctx.fillStyle = bg;
     ctx.fillRect(0, 0, W, H);
 
     // Subtle mouse-reactive glow
     const glow = ctx.createRadialGradient(mouseX, mouseY, 0, mouseX, mouseY, 280);
-    glow.addColorStop(0, 'rgba(167,139,250,0.06)');
+    glow.addColorStop(0, 'rgba(96,165,250,0.12)');
     glow.addColorStop(1, 'transparent');
     ctx.fillStyle = glow;
     ctx.fillRect(0, 0, W, H);
 
     // Soft grid
     ctx.save();
-    ctx.strokeStyle = 'rgba(167,139,250,0.055)';
+    ctx.strokeStyle = 'rgba(96,165,250,0.06)';
     ctx.lineWidth = 1;
     const step = 90;
     for (let x = 0; x < W; x += step) {
@@ -438,7 +438,7 @@ loadGitHubProfile();
         const primaryLink = repo.homepage || repo.html_url;
         const repoName = repo.name.replace(/-/g, ' ').replace(/_/g, ' ');
         const updated = formatDate(repo.updated_at);
-        
+
         // Hide Live Demo for eye disease (or specific) projects even if they have a homepage set
         const hideDemo = repoName.toLowerCase().includes('disease') || repoName.toLowerCase().includes('eye');
         const showDemo = repo.homepage && !hideDemo;
@@ -569,4 +569,79 @@ loadGitHubProfile();
         </div>`;
         if (syncStatus) syncStatus.textContent = 'Could not sync — see GitHub';
     }
+})();
+
+
+// ─── CERTIFICATE LIGHTBOX MODAL ──────────────────
+(function initCertModal() {
+    const modal = document.getElementById('cert-modal');
+    if (!modal) return;
+
+    const modalBox = modal.querySelector('.cert-modal-box');
+    const modalImg = document.getElementById('cert-modal-img');
+    const modalTitle = document.getElementById('cert-modal-title');
+    const modalIssuer = document.getElementById('cert-modal-issuer');
+    const modalClose = document.getElementById('cert-modal-close');
+    const modalBackdrop = document.getElementById('cert-modal-backdrop');
+    const modalPrev = document.getElementById('cert-modal-prev');
+    const modalNext = document.getElementById('cert-modal-next');
+    const modalCounter = document.getElementById('cert-modal-counter');
+    const modalOpen = document.getElementById('cert-modal-open');
+
+    let currentIndex = 0;
+    let certCards = [];
+
+    function updateModalList() {
+        certCards = Array.from(document.querySelectorAll('.cert-card[data-img]'));
+    }
+
+    function showCert(index) {
+        updateModalList();
+        if (!certCards.length) return;
+        if (index < 0) index = certCards.length - 1;
+        if (index >= certCards.length) index = 0;
+        currentIndex = index;
+
+        const card = certCards[currentIndex];
+        const imgSrc = card.getAttribute('data-img');
+        const title = card.getAttribute('data-title') || card.querySelector('.cert-name')?.textContent || 'Certificate';
+        const issuer = card.getAttribute('data-issuer') || card.querySelector('.cert-issuer')?.textContent || '';
+
+        modalImg.src = imgSrc;
+        modalImg.alt = title;
+        modalTitle.textContent = title;
+        modalIssuer.textContent = issuer;
+        modalCounter.textContent = `${currentIndex + 1} / ${certCards.length}`;
+        modalOpen.href = imgSrc;
+
+        modal.classList.add('active');
+        document.body.classList.add('modal-open');
+    }
+
+    function closeModal() {
+        modal.classList.remove('active');
+        document.body.classList.remove('modal-open');
+        modalImg.src = '';
+    }
+
+    updateModalList();
+    certCards.forEach((card, i) => {
+        card.addEventListener('click', (e) => {
+            // Avoid triggering when user clicks on a verify link
+            if (e.target.closest('a')) return;
+            showCert(i);
+        });
+    });
+
+    if (modalClose) modalClose.addEventListener('click', closeModal);
+    if (modalBackdrop) modalBackdrop.addEventListener('click', closeModal);
+    if (modalPrev) modalPrev.addEventListener('click', () => showCert(currentIndex - 1));
+    if (modalNext) modalNext.addEventListener('click', () => showCert(currentIndex + 1));
+
+    document.addEventListener('keydown', (e) => {
+        if (!modal.classList.contains('active')) return;
+        if (e.key === 'Escape') closeModal();
+        if (e.key === 'ArrowLeft') showCert(currentIndex - 1);
+        if (e.key === 'ArrowRight') showCert(currentIndex + 1);
+    });
 })();
